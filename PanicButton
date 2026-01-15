@@ -1,0 +1,313 @@
+app/
+ └─ src/
+    └─ main/
+       ├─ java/com/example/panicbutton/
+       │   ├─ MainActivity.java
+       │   ├─ ShakeDetector.java
+       │   ├─ PowerButtonReceiver.java
+       │   ├─ PanicService.java
+       │   └─ LocationHelper.java
+       │
+       ├─ res/layout/
+       │   └─ activity_main.xml
+       │
+       ├─ AndroidManifest.xml
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    package="com.example.panicbutton">
+
+    <uses-permission android:name="android.permission.SEND_SMS"/>
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION"/>
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION"/>
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED"/>
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE"/>
+
+    <application
+        android:label="Panic Button"
+        android:icon="@mipmap/ic_launcher"
+        android:theme="@style/Theme.AppCompat.Light.NoActionBar">
+
+        <activity android:name=".MainActivity">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN"/>
+                <category android:name="android.intent.category.LAUNCHER"/>
+            </intent-filter>
+        </activity>
+
+        <receiver android:name=".PowerButtonReceiver">
+            <intent-filter>
+                <action android:name="android.intent.action.SCREEN_OFF"/>
+            </intent-filter>
+        </receiver>
+
+    </application>
+</manifest>
+<RelativeLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="#000000">
+
+    <Button
+        android:id="@+id/panicButton"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_centerInParent="true"
+        android:text="PANIC BUTTON"
+        android:textSize="30sp"
+        android:textColor="#FFFFFF"
+        android:background="#FF0000"
+        android:padding="25dp"/>
+</RelativeLayout>
+package com.example.panicbutton;
+
+import android.Manifest;
+import android.os.Bundle;
+import android.widget.Button;
+import androidx.appcompat.app.AppCompatActivity;
+import androidx.core.app.ActivityCompat;
+
+public class MainActivity extends AppCompatActivity {
+
+    @Override
+    protected void onCreate(Bundle savedInstanceState) {
+        super.onCreate(savedInstanceState);
+        setContentView(R.layout.activity_main);
+
+        ActivityCompat.requestPermissions(this,
+                new String[]{
+                        Manifest.permission.SEND_SMS,
+                        Manifest.permission.ACCESS_FINE_LOCATION
+                }, 1);
+
+        Button panic = findViewById(R.id.panicButton);
+        panic.setOnClickListener(v -> PanicService.triggerPanic(this));
+
+        ShakeDetector.start(this);
+    }
+}
+package com.example.panicbutton;
+
+import android.content.Context;
+import android.telephony.SmsManager;
+
+public class PanicService {
+
+    private static final String[] CONTACTS = {
+            "1234567890",   // CHANGE THESE
+            "0987654321"
+    };
+
+    public static void triggerPanic(Context context) {
+        String location = LocationHelper.getLocation(context);
+
+        String message = "🚨 PANIC ALERT!\nI need help immediately.\n" + location;
+
+        SmsManager sms = SmsManager.getDefault();
+        for (String contact : CONTACTS) {
+            sms.sendTextMessage(contact, null, message, null, null);
+        }
+    }
+}
+package com.example.panicbutton;
+
+import android.content.Context;
+import android.location.Location;
+import android.location.LocationManager;
+import androidx.core.app.ActivityCompat;
+import android.Manifest;
+import android.content.pm.PackageManager;
+
+public class LocationHelper {
+
+    public static String getLocation(Context context) {
+        try {
+            LocationManager lm = (LocationManager) context.getSystemService(Context.LOCATION_SERVICE);
+
+            if (ActivityCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION)
+                    != PackageManager.PERMISSION_GRANTED) {
+                return "Location permission not granted";
+            }
+
+            Location loc = lm.getLastKnownLocation(LocationManager.GPS_PROVIDER);
+
+            if (loc != null) {
+                return "https://maps.google.com/?q=" +
+                        loc.getLatitude() + "," + loc.getLongitude();
+            }
+        } catch (Exception e) {
+            return "Location unavailable";
+        }
+
+        return "Location not found";
+    }
+}
+package com.example.panicbutton;
+
+import android.content.Context;
+import android.hardware.Sensor;
+import android.hardware.SensorEvent;
+import android.hardware.SensorEventListener;
+import android.hardware.SensorManager;
+
+public class ShakeDetector implements SensorEventListener {
+
+    private static SensorManager sensorManager;
+    private static long lastShake = 0;
+    private static Context appContext;
+
+    public static void start(Context context) {
+        appContext = context;
+        sensorManager = (SensorManager) context.getSystemService(Context.SENSOR_SERVICE);
+        Sensor accel = sensorManager.getDefaultSensor(Sensor.TYPE_ACCELEROMETER);
+        sensorManager.registerListener(new ShakeDetector(), accel, SensorManager.SENSOR_DELAY_NORMAL);
+    }
+
+    @Override
+    public void onSensorChanged(SensorEvent event) {
+        float x = event.values[0];
+        float y = event.values[1];
+        float z = event.values[2];
+
+        double force = Math.sqrt(x * x + y * y + z * z);
+
+        if (force > 25) {
+            long now = System.currentTimeMillis();
+            if (now - lastShake > 2000) {
+                lastShake = now;
+                PanicService.triggerPanic(appContext);
+            }
+        }
+    }
+
+    @Override
+    public void onAccuracyChanged(Sensor sensor, int accuracy) {}
+}
+package com.example.panicbutton;
+
+import android.content.BroadcastReceiver;
+import android.content.Context;
+import android.content.Intent;
+
+public class PowerButtonReceiver extends BroadcastReceiver {
+
+    private static int count = 0;
+    private static long lastPress = 0;
+
+    @Override
+    public void onReceive(Context context, Intent intent) {
+        long now = System.currentTimeMillis();
+
+        if (now - lastPress < 2000) {
+            count++;
+            if (count == 3) {
+                PanicService.triggerPanic(context);
+                count = 0;
+            }
+        } else {
+            count = 1;
+        }
+
+        lastPress = now;
+    }
+}
+package com.example.panicbutton;
+
+import android.content.Context;
+import android.content.Intent;
+import android.net.Uri;
+
+public class WhatsAppHelper {
+
+    public static void openWhatsApp(Context context, String phone, String message) {
+        try {
+            Intent intent = new Intent(Intent.ACTION_VIEW);
+            String url = "https://wa.me/" + phone + "?text=" + Uri.encode(message);
+            intent.setData(Uri.parse(url));
+            intent.setPackage("com.whatsapp");
+            context.startActivity(intent);
+        } catch (Exception ignored) {}
+    }
+}
+// After SMS loop
+WhatsAppHelper.openWhatsApp(context, "27821234567", message);
+package com.example.panicbutton;
+
+import android.content.Context;
+import android.location.Location;
+import android.location.LocationManager;
+
+import com.google.firebase.firestore.FirebaseFirestore;
+
+public class LiveLocationService {
+
+    public static void pushLocation(Context context) {
+        try {
+            LocationManager lm = (LocationManager) context.getSystemService(Context.LOCATION_SERVICE);
+            Location loc = lm.getLastKnownLocation(LocationManager.GPS_PROVIDER);
+
+            if (loc != null) {
+                FirebaseFirestore.getInstance()
+                        .collection("panic_locations")
+                        .add(new LocationModel(
+                                loc.getLatitude(),
+                                loc.getLongitude(),
+                                System.currentTimeMillis()
+                        ));
+            }
+        } catch (Exception ignored) {}
+    }
+}
+package com.example.panicbutton;
+
+public class LocationModel {
+    public double lat, lng;
+    public long time;
+
+    public LocationModel(double lat, double lng, long time) {
+        this.lat = lat;
+        this.lng = lng;
+        this.time = time;
+    }
+}
+LiveLocationService.pushLocation(context);
+package com.example.panicbutton;
+
+import java.util.ArrayList;
+import java.util.List;
+
+public class ContactManager {
+    public static List<String> contacts = new ArrayList<>();
+
+    static {
+        contacts.add("27821234567");
+        contacts.add("27829876543");
+    }
+}
+for (String contact : ContactManager.contacts) {
+    sms.sendTextMessage(contact, null, message, null, null);
+}
+package com.example.panicbutton;
+
+import android.os.Bundle;
+import androidx.appcompat.app.AppCompatActivity;
+
+public class CalculatorActivity extends AppCompatActivity {
+    @Override
+    protected void onCreate(Bundle b) {
+        super.onCreate(b);
+        setContentView(R.layout.fake_calculator);
+    }
+}
+<TextView
+    xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:text="Calculator"
+    android:gravity="center"
+    android:textSize="30sp"/>
+res/mipmap/ic_launcher.png
+<style name="Theme.Splash" parent="Theme.MaterialComponents.DayNight.NoActionBar">
+    <item name="android:windowBackground">@drawable/splash</item>
+</style>
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+    <item android:drawable="@color/black"/>
+</layer-list>
