@@ -1,0 +1,1 @@
+Panic App including: SMS live location, WhatsApp broadcast, background audio recording, stealth icon, Firebase setup helpers, APK/IPA build guide, PIN cancel, geofencing & proximity alerts, Bluetooth trigger, voice activation.
